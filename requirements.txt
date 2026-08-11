@@ -1,0 +1,8 @@
+wntr
+deap
+pyyaml
+pandas
+openpyxl
+numpy
+streamlit
+plotly

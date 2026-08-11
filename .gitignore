@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Resultados y archivos temporales de corridas
+checkpoint*.pkl
+overnight_resultados/
+*.rpt
+*.bin
+temp.*
+
+# Redes reales de proyecto: no se publican. Solo se versiona la red de
+# ejemplo (Net1.inp, genérica, incluida con wntr) para que el repo sea
+# clonable y funcional sin exponer datos de clientes.
+networks/*
+!networks/Net1.inp
+
+# Streamlit
+.streamlit/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

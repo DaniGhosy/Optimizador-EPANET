@@ -1,0 +1,44 @@
+red:
+  inp_path: networks/Net1.inp   # red de ejemplo — cambia esto a tu propia .inp
+
+extra_caudal:
+  activo: false
+  presupuesto_lps: 10.0   # caudal de diseño extra, repartido proporcional a la demanda base
+
+restricciones:
+  velocidad:
+    activo: true
+    vmin: 0.59
+    vmax: 3.0
+    peso_penalizacion: 10
+    excepciones_vmax:
+      "161": 5.0   # línea de aducción al tanque, tolera hasta 5 m/s
+
+  perdida_unitaria:
+    activo: true
+    hlmax: 60
+    peso_penalizacion: 5
+
+  presion_minima:
+    activo: false
+    valor: 15
+    peso_penalizacion: 15
+
+  costo:
+    activo: false
+    tabla_costos: costos_pvc.csv
+    peso_en_objetivo: 1
+
+catalogo_diametros: [50, 60, 63, 75, 100, 125, 150, 175, 200, 225, 250, 300, 325, 350, 375, 400, 450, 500]
+
+ga:
+  sembrar_diseno_actual: true   # inyecta el diseño actual (redondeado al catálogo) en la población inicial
+  poblacion: 150
+  generaciones: 300
+  prob_cruce: 0.7
+  prob_mutacion: 0.2
+  tam_torneo: 3
+  semilla: 42
+  procesos: 14
+  checkpoint_path: checkpoint.pkl
+  checkpoint_cada: 5
