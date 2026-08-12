@@ -4,5 +4,4 @@ pyyaml
 pandas
 openpyxl
 numpy
-streamlit
-plotly
+flask

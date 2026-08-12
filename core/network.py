@@ -54,6 +54,22 @@ def aplicar_caudal_extra(wn, presupuesto_lps):
             wn.get_node(name).add_demand(extra_m3s, None, category="extra_diseno")
 
 
+def resetear_demanda_base(wn, valor_lps):
+    """Fija la demanda base de TODOS los nodos al mismo valor de diseño,
+    descartando cualquier margen/extra que ya viniera incluido en el .inp
+    para nodos específicos (p.ej. un caudal extra aplicado manualmente en
+    una iteración anterior del diseño). Deja una base pareja para simular
+    desde cero, antes de — opcionalmente — repartir un caudal_extra nuevo
+    y controlado con aplicar_caudal_extra()."""
+    if valor_lps <= 0:
+        return
+    valor_m3s = valor_lps / 1000.0
+    for name in wn.junction_name_list:
+        node = wn.get_node(name)
+        node.demand_timeseries_list.clear()
+        node.add_demand(valor_m3s, None, category="base_diseno")
+
+
 def diametros_actuales_a_indices_catalogo(wn, pipe_names, catalogo_diametros):
     """Diámetros ya presentes en la red, cada uno mapeado al valor más
     cercano del catálogo. Sirve para "sembrar" el GA con el diseño actual
@@ -70,13 +86,22 @@ def diametros_actuales_a_indices_catalogo(wn, pipe_names, catalogo_diametros):
 
 
 def load_network_para_optimizacion(inp_path, config):
-    """load_network + aplicar_caudal_extra según config['extra_caudal'],
-    en un solo paso para no repetir esta lógica en cada punto de entrada
-    (main.py serial y cada worker de multiprocessing)."""
+    """load_network + resetear_demanda_base + aplicar_caudal_extra según
+    config, en un solo paso para no repetir esta lógica en cada punto de
+    entrada (main.py serial y cada worker de multiprocessing). El reseteo
+    de demanda base corre primero — si está activo, deja a todos los nodos
+    en el mismo valor de diseño antes de que el caudal extra (si también
+    está activo) reparta su presupuesto sobre esa base ya pareja."""
     wn = load_network(inp_path)
+
+    demanda_base_cfg = config.get("demanda_base", {})
+    if demanda_base_cfg.get("resetear", False):
+        resetear_demanda_base(wn, demanda_base_cfg.get("valor_lps", 0))
+
     extra_cfg = config.get("extra_caudal", {})
     if extra_cfg.get("activo", False):
         aplicar_caudal_extra(wn, extra_cfg.get("presupuesto_lps", 0))
+
     return wn
 
 

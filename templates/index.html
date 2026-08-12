@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optimizador de Diámetros — GALINDO</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand-block">
+      <div class="brand">
+        <strong>GALINDO</strong>
+      </div>
+      <div class="epanet-badge">
+        <svg width="22" height="15" viewBox="0 0 30 20" fill="none">
+          <circle cx="5" cy="15" r="2.1" fill="var(--surface)" stroke="var(--ink-faint)" stroke-width="1.3"/>
+          <circle cx="15" cy="5" r="2.1" fill="var(--surface)" stroke="var(--ink-faint)" stroke-width="1.3"/>
+          <circle cx="25" cy="15" r="2.1" fill="var(--surface)" stroke="var(--ink-faint)" stroke-width="1.3"/>
+          <path d="M5 15 15 5 25 15" stroke="var(--ink-faint)" stroke-width="1.3" fill="none"/>
+        </svg>
+        Optimizador para EPANET 2.2
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-target="red">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4.5C2 3.7 2.7 3 3.5 3H7l1.5 2H12.5c.8 0 1.5.7 1.5 1.5v5c0 .8-.7 1.5-1.5 1.5h-9C2.7 13 2 12.3 2 11.5v-7Z" stroke="currentColor" stroke-width="1.3"/></svg>
+        Red
+      </button>
+      <button class="tab-btn" data-target="parametros">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6" cy="4" r="1.6" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="8" r="1.6" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/><circle cx="7" cy="12" r="1.6" fill="var(--surface)" stroke="currentColor" stroke-width="1.3"/></svg>
+        Parámetros
+      </button>
+      <button class="tab-btn" data-target="resultados">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13V7M8 13V3M13 13V9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Ejecutar / Resultados
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <span id="rail-red-estado">Ninguna red cargada</span>
+      <a class="yt-link" href="https://www.youtube.com/@Galindo.IngCivil" target="_blank" rel="noopener">
+        <svg width="15" height="11" viewBox="0 0 28 20" fill="none">
+          <rect x="0.5" y="0.5" width="27" height="19" rx="4.5" fill="#FF0000"/>
+          <path d="M11 5.5 L20 10 L11 14.5 Z" fill="#ffffff"/>
+        </svg>
+        @Galindo.IngCivil
+      </a>
+    </div>
+  </aside>
+
+  <main>
+
+    <!-- ================= RED ================= -->
+    <section class="panel active" id="panel-red">
+      <div class="topbar">
+        <div>
+          <h1>Red EPANET</h1>
+          <div class="sub">Sube un archivo .inp — la codificación (utf-8 o cp1252) se detecta sola.</div>
+        </div>
+      </div>
+
+      <div class="card ticked" id="dropzone" style="border-style:dashed; text-align:center; padding:40px 20px; cursor:pointer;">
+        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" style="margin-bottom:10px;"><path d="M15 20V8M9 14l6-6 6 6" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 22v2.5c0 .8.7 1.5 1.5 1.5h15c.8 0 1.5-.7 1.5-1.5V22" stroke="var(--ink-faint)" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <div style="font-weight:600;">Arrastra tu archivo .inp aquí</div>
+        <div class="texto-tenue" style="margin-top:4px;">o hacé clic para buscarlo · máx. 200&nbsp;MB</div>
+        <input type="file" id="input-inp" accept=".inp" class="oculto">
+      </div>
+      <div id="red-mensaje" class="texto-tenue" style="margin-top:10px;"></div>
+
+      <div class="grid-4" style="margin-top:16px;">
+        <div class="metric"><div class="label">Tuberías</div><div class="metric-value num" id="red-tuberias">—</div></div>
+        <div class="metric"><div class="label">Nodos</div><div class="metric-value num" id="red-nodos">—</div></div>
+        <div class="metric"><div class="label">Unidades</div><div class="metric-value" id="red-unidades">—</div></div>
+        <div class="metric"><div class="label">Fórmula</div><div class="metric-value" id="red-formula">—</div></div>
+      </div>
+    </section>
+
+    <!-- ================= PARAMETROS ================= -->
+    <section class="panel" id="panel-parametros">
+      <div class="topbar">
+        <div>
+          <h1>Parámetros</h1>
+          <div class="sub">Cada restricción se activa, desactiva y pesa por separado — la que apagues, el GA ni la considera.</div>
+        </div>
+        <button class="btn primary" id="btn-guardar-parametros">Guardar parámetros</button>
+      </div>
+      <div class="texto-tenue oculto" id="parametros-status" style="margin-bottom:14px;"></div>
+
+      <div class="grid-2">
+        <div class="stack">
+          <div class="card ticked">
+            <h2>Catálogo de diámetros comerciales (mm)</h2>
+            <div class="field">
+              <label>Diámetros, separados por coma</label>
+              <input type="text" id="input-catalogo">
+            </div>
+            <div class="chip-row" id="catalogo-chips" style="margin-top:10px;"></div>
+          </div>
+
+          <div class="card ticked">
+            <div class="switch-row" data-toggles="body-velocidad">
+              <div><div class="name">Restricción de velocidad</div><div class="hint" id="hint-velocidad">Activa — se evalúa en cada tubería</div></div>
+              <div class="switch on" id="switch-velocidad"></div>
+            </div>
+            <div class="restriction-body" id="body-velocidad">
+              <div class="grid-3">
+                <div class="field"><label>Mínima (m/s)</label><input type="text" id="input-vmin" value="0.6"></div>
+                <div class="field"><label>Máxima (m/s)</label><input type="text" id="input-vmax" value="3.0"></div>
+                <div class="field"><label>Peso</label><input type="text" id="input-peso-v" value="10"></div>
+              </div>
+              <div style="margin-top:14px; font-size:12px; color:var(--ink-dim);">Excepciones de velocidad máxima por tubería — ej. la línea de conducción, que puede ir más rápido que el resto de la red</div>
+              <div class="exc-list" id="exc-list"></div>
+              <button class="btn ghost" id="exc-add" style="margin-top:8px; padding:6px 12px; font-size:12px;">+ Agregar excepción</button>
+            </div>
+          </div>
+
+          <div class="card ticked">
+            <div class="switch-row" data-toggles="body-perdida">
+              <div><div class="name">Restricción de pérdida unitaria</div><div class="hint" id="hint-perdida">Activa — se evalúa en cada tubería</div></div>
+              <div class="switch on" id="switch-perdida"></div>
+            </div>
+            <div class="restriction-body" id="body-perdida">
+              <div class="grid-3">
+                <div class="field"><label>Máxima (m/km)</label><input type="text" id="input-hlmax" value="60"></div>
+                <div class="field"><label>Peso</label><input type="text" id="input-peso-hl" value="5"></div>
+                <div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card ticked">
+            <div class="switch-row" data-toggles="body-presion">
+              <div><div class="name">Presión mínima</div><div class="hint" id="hint-presion">Desactivada — no se evalúa</div></div>
+              <div class="switch" id="switch-presion"></div>
+            </div>
+            <div class="restriction-body" id="body-presion" hidden>
+              <div class="grid-3">
+                <div class="field"><label>Mínima (m)</label><input type="text" id="input-presion-valor" value="15"></div>
+                <div class="field"><label>Peso</label><input type="text" id="input-peso-presion" value="15"></div>
+                <div></div>
+              </div>
+            </div>
+            <div class="switch-row" data-toggles="body-demanda-base" style="border-top:1px solid var(--line); margin-top:4px;">
+              <div><div class="name">Resetear demanda base</div><div class="hint" id="hint-demanda-base">Desactivado — usa las demandas tal cual vienen en el .inp</div></div>
+              <div class="switch" id="switch-demanda-base"></div>
+            </div>
+            <div class="restriction-body" id="body-demanda-base" hidden>
+              <div class="field">
+                <label>Demanda base de diseño (L/s por nodo)</label>
+                <input type="text" id="input-demanda-base-valor" value="2.366">
+              </div>
+              <div class="texto-tenue" style="margin-top:8px;">Antes de simular, fija TODOS los nodos a este valor — descarta cualquier extra que ya viniera incluido en el .inp para nodos específicos (ej. de una iteración de diseño anterior). Corre antes que el caudal extra de abajo, así puedes repartir un presupuesto nuevo sobre una base pareja.</div>
+            </div>
+
+            <div class="switch-row" data-toggles="body-extra" style="border-top:1px solid var(--line); margin-top:4px;">
+              <div><div class="name">Caudal extra de diseño</div><div class="hint" id="hint-extra">Desactivado</div></div>
+              <div class="switch" id="switch-extra"></div>
+            </div>
+            <div class="restriction-body" id="body-extra" hidden>
+              <div class="field"><label>Presupuesto (L/s)</label><input type="text" id="input-presupuesto" value="10"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card ticked">
+          <h2>Algoritmo genético</h2>
+          <div class="grid-2" style="grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="field"><label>Población</label><input type="text" id="input-poblacion" value="150"></div>
+            <div class="field"><label>Generaciones</label><input type="text" id="input-generaciones" value="300"></div>
+            <div class="field"><label>Prob. cruce <span class="num" id="val-prob-cruce">0.70</span></label><input type="range" id="input-prob-cruce" min="0" max="1" step="0.05" value="0.7"></div>
+            <div class="field"><label>Prob. mutación <span class="num" id="val-prob-mutacion">0.20</span></label><input type="range" id="input-prob-mutacion" min="0" max="1" step="0.01" value="0.2"></div>
+            <div class="field"><label>Tamaño de torneo</label><input type="text" id="input-tam-torneo" value="3"></div>
+            <div class="field"><label>Semilla</label><input type="text" id="input-semilla" value="42"></div>
+            <div class="field"><label>Procesos</label><input type="text" id="input-procesos" value="14"></div>
+            <div class="field"><label>&nbsp;</label></div>
+          </div>
+          <div class="switch-row" style="border-top:1px solid var(--line); margin-top:4px;">
+            <div><div class="name">Sembrar con diseño actual</div><div class="hint">Warm start desde el .inp cargado</div></div>
+            <div class="switch on" id="switch-sembrar"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= RESULTADOS ================= -->
+    <section class="panel" id="panel-resultados">
+      <div class="topbar">
+        <div>
+          <h1>Ejecutar / Resultados</h1>
+          <div class="sub" id="resultados-sub">Sube primero una red en la pestaña "Red".</div>
+        </div>
+      </div>
+
+      <div class="mode-switch-bar">
+        <div class="mode-card active" id="mode-card-normal" data-mode="normal">
+          <div>
+            <div class="mtitle">Búsqueda normal</div>
+            <div class="mhint">Una corrida, una semilla</div>
+          </div>
+          <div class="switch on" id="switch-mode-normal"></div>
+        </div>
+        <div class="mode-card" id="mode-card-nocturna" data-mode="nocturna">
+          <div>
+            <div class="mtitle">Búsqueda AFK</div>
+            <div class="mhint">Muchas semillas, en segundo plano</div>
+          </div>
+          <div class="switch brass" id="switch-mode-nocturna"></div>
+        </div>
+      </div>
+
+      <!-- ---- MODO NORMAL ---- -->
+      <div class="mode-block active" id="mode-normal">
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-bottom:16px; align-items:center;">
+          <span class="status-chip oculto" id="chip-normal"><span class="dot"></span><span id="chip-normal-texto">—</span></span>
+          <button class="btn primary" id="btn-correr">▶ Correr optimización</button>
+        </div>
+
+        <details class="bitacora oculto" id="bitacora-normal-wrap">
+          <summary>Bitácora de la corrida</summary>
+          <pre id="bitacora-normal"></pre>
+        </details>
+
+        <div id="resultado-normal-wrap" class="oculto">
+          <div class="grid-4">
+            <div class="metric">
+              <div class="label">Fitness final</div>
+              <div class="metric-value accent num" id="rn-fitness">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Velocidad</div>
+              <div class="metric-value num" id="rn-velocidad">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Pérdida unitaria</div>
+              <div class="metric-value num" id="rn-perdida">—</div>
+            </div>
+            <div class="metric">
+              <div class="label">Tuberías conformes</div>
+              <div class="metric-value num" id="rn-conformes">—</div>
+            </div>
+          </div>
+
+          <div class="grid-2" style="margin-top:16px;">
+            <div class="card ticked">
+              <h2>Mapa de la red — pasa el mouse sobre una tubería, nodo o el tanque</h2>
+              <div class="schematic-frame">
+                <svg class="network-svg" id="svg-normal" viewBox="0 0 640 400" width="100%" style="display:block;"></svg>
+              </div>
+              <div class="legend" id="leyenda-normal"></div>
+            </div>
+
+            <div class="stack">
+              <div class="card ticked">
+                <h2>Tuberías fuera de rango</h2>
+                <div class="violation-list" id="viol-normal"></div>
+              </div>
+
+              <div class="card ticked">
+                <h2>Curva de convergencia</h2>
+                <svg viewBox="0 0 300 110" width="100%" height="110" id="conv-normal"></svg>
+                <div class="legend" style="margin-top:2px;">
+                  <div class="item"><span class="swatch" style="background:var(--accent)"></span>fitness mínimo</div>
+                  <div class="item"><span class="swatch" style="background:var(--ink-faint)"></span>fitness promedio</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card ticked" style="margin-top:16px;">
+            <div class="switch-row" data-toggles="body-tabla-normal">
+              <div><div class="name">Tabla de tuberías</div><div class="hint" id="hint-tabla-normal">Desplegada</div></div>
+              <div class="switch on" id="switch-tabla-normal"></div>
+            </div>
+            <div class="restriction-body" id="body-tabla-normal">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Tubería</th><th class="num">Diámetro (mm)</th><th class="num">Longitud (m)</th><th class="num">Velocidad (m/s)</th><th class="num">Pérd. unitaria (m/km)</th><th>Estado</th></tr></thead>
+                  <tbody id="tabla-normal-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:16px;">
+            <a class="btn" id="dl-inp-normal" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M3.5 6 7 9.5 10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Descargar .inp optimizado</a>
+            <a class="btn" id="dl-xlsx-normal" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M3.5 6 7 9.5 10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Descargar reporte .xlsx</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- MODO NOCTURNA ---- -->
+      <div class="mode-block" id="mode-nocturna">
+        <p class="texto-tenue">Corre la optimización muchas veces con semillas distintas, en segundo plano, y se queda con la mejor. Corre como proceso aparte — puedes cambiar de sección o cerrar el navegador, sigue trabajando; vuelve cuando quieras y pulsa "Actualizar estado".</p>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+          <div class="field" style="width:120px;"><label>Horas máx.</label><input type="text" id="input-horas" value="8"></div>
+          <div class="field" style="width:170px;"><label>Máx. semillas (opcional)</label><input type="text" id="input-nsemillas" value=""></div>
+          <button class="btn ghost" style="align-self:flex-end;" id="btn-detener-nocturna">⏹ Detener</button>
+          <button class="btn night" style="align-self:flex-end;" id="btn-iniciar-nocturna">🌙 Iniciar en segundo plano</button>
+          <button class="btn" style="align-self:flex-end;" id="btn-actualizar-nocturna">🔄 Actualizar estado</button>
+        </div>
+
+        <div id="nocturna-sin-datos" class="texto-tenue">Todavía no se ha iniciado ninguna búsqueda AFK en esta carpeta.</div>
+
+        <div id="nocturna-wrap" class="oculto">
+          <div class="grid-4">
+            <div class="metric"><div class="label">Estado</div><div class="metric-value" style="font-size:16px; display:flex; align-items:center; gap:7px;"><span class="dot idle" id="nocturna-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block;"></span><span id="nocturna-estado">—</span></div></div>
+            <div class="metric"><div class="label">Semillas probadas</div><div class="metric-value num" id="nocturna-intentos">—</div></div>
+            <div class="metric"><div class="label">Tiempo transcurrido</div><div class="metric-value num" id="nocturna-tiempo">—</div></div>
+            <div class="metric"><div class="label">Mejor fitness</div><div class="metric-value accent num" id="nocturna-mejor-fitness">—</div></div>
+          </div>
+
+          <div class="card ticked oculto" id="seed-card" style="margin-top:16px;">
+            <h2 id="seed-titulo">Fitness por semilla</h2>
+            <div id="seed-list"></div>
+          </div>
+
+          <div id="mejor-nocturna-wrap" class="oculto">
+            <div class="subhead"><h3 id="mejor-nocturna-titulo">Resultado de la mejor semilla</h3><div class="rule"></div></div>
+
+            <div class="grid-4">
+              <div class="metric"><div class="label">Fitness final</div><div class="metric-value accent num" id="rc-fitness">—</div></div>
+              <div class="metric"><div class="label">Velocidad</div><div class="metric-value num" id="rc-velocidad">—</div></div>
+              <div class="metric"><div class="label">Pérdida unitaria</div><div class="metric-value num" id="rc-perdida">—</div></div>
+              <div class="metric"><div class="label">Tuberías conformes</div><div class="metric-value num" id="rc-conformes">—</div></div>
+            </div>
+
+            <div class="grid-2" style="margin-top:16px;">
+              <div class="card ticked">
+                <h2>Mapa de la red — pasa el mouse sobre una tubería, nodo o el tanque</h2>
+                <div class="schematic-frame">
+                  <svg class="network-svg" id="svg-nocturna" viewBox="0 0 640 400" width="100%" style="display:block;"></svg>
+                </div>
+                <div class="legend" id="leyenda-nocturna"></div>
+              </div>
+              <div class="card ticked">
+                <h2>Tuberías fuera de rango</h2>
+                <div class="violation-list" id="viol-nocturna"></div>
+              </div>
+            </div>
+
+            <div class="card ticked" style="margin-top:16px;">
+              <div class="switch-row" data-toggles="body-tabla-nocturna">
+                <div><div class="name">Tabla de tuberías (mejor semilla)</div><div class="hint" id="hint-tabla-nocturna">Desplegada</div></div>
+                <div class="switch on" id="switch-tabla-nocturna"></div>
+              </div>
+              <div class="restriction-body" id="body-tabla-nocturna">
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr><th>Tubería</th><th class="num">Diámetro (mm)</th><th class="num">Longitud (m)</th><th class="num">Velocidad (m/s)</th><th class="num">Pérd. unitaria (m/km)</th><th>Estado</th></tr></thead>
+                    <tbody id="tabla-nocturna-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-top:16px;">
+              <a class="btn" id="dl-inp-nocturna" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M3.5 6 7 9.5 10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Descargar mejor .inp</a>
+              <a class="btn" id="dl-xlsx-nocturna" href="#"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M3.5 6 7 9.5 10.5 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Descargar mejor .xlsx</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="map-tooltip" id="map-tooltip" hidden>
+  <div class="tt-id" id="tt-id"></div>
+  <div id="tt-rows"></div>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

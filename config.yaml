@@ -1,6 +1,10 @@
 red:
   inp_path: networks/Net1.inp   # red de ejemplo — cambia esto a tu propia .inp
 
+demanda_base:
+  resetear: false
+  valor_lps: 2.366   # demanda base de diseño pareja para todos los nodos (antes de cualquier extra)
+
 extra_caudal:
   activo: false
   presupuesto_lps: 10.0   # caudal de diseño extra, repartido proporcional a la demanda base
