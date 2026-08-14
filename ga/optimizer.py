@@ -16,21 +16,34 @@ if not hasattr(creator, "Individual"):
     creator.create("Individual", list, fitness=creator.FitnessMin)
 
 
-def _build_toolbox(n_genes, n_diametros, tam_torneo):
+def _build_toolbox(n_genes, n_diametros, tam_torneo, bandas=None):
+    """`bandas`, si se da, es una lista de (idx_min, idx_max) por gen — acota
+    la inicialización y mutación de cada tubería a un rango de catálogo
+    físicamente plausible (calculado a partir de un caudal aproximado, ver
+    main.py:_calcular_bandas_diametro) en vez del catálogo completo. Reduce el
+    espacio de búsqueda real sin descartar el óptimo: el cálculo deja margen
+    generoso. Sin `bandas`, cada gen usa el catálogo completo (0..n_diametros-1),
+    el comportamiento original."""
     toolbox = base.Toolbox()
-    toolbox.register("attr_indice", random.randint, 0, n_diametros - 1)
-    toolbox.register(
-        "individual",
-        tools.initRepeat,
-        creator.Individual,
-        toolbox.attr_indice,
-        n=n_genes,
-    )
+    rangos = bandas if bandas is not None else [(0, n_diametros - 1)] * n_genes
+
+    def _individuo():
+        return creator.Individual(random.randint(lo, hi) for lo, hi in rangos)
+
+    def _mutar(individual, indpb):
+        for i, (lo, hi) in enumerate(rangos):
+            if random.random() < indpb:
+                individual[i] = random.randint(lo, hi)
+        return (individual,)
+
+    toolbox.register("individual", _individuo)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-    toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register(
-        "mutate", tools.mutUniformInt, low=0, up=n_diametros - 1, indpb=0.02
-    )
+    # Cruce uniforme en vez de dos-puntos: el orden de los genes (tuberías) no
+    # tiene significado espacial, así que cortar en dos puntos y mezclar
+    # bloques contiguos no respeta ninguna estructura real del problema — es
+    # el caso típico donde el cruce uniforme converge mejor que n-puntos.
+    toolbox.register("mate", tools.cxUniform, indpb=0.5)
+    toolbox.register("mutate", _mutar, indpb=0.02)
     toolbox.register("select", tools.selTournament, tournsize=tam_torneo)
     return toolbox
 
@@ -38,8 +51,15 @@ def _build_toolbox(n_genes, n_diametros, tam_torneo):
 def _evaluar_lote(evaluate_fn, map_fn, individuos):
     planos = [list(ind) for ind in individuos]
     resultados = list(map_fn(evaluate_fn, planos))
-    for ind, valor in zip(individuos, resultados):
-        ind.fitness.values = (valor,)
+    for ind, (genes, fitness) in zip(individuos, resultados):
+        # evaluate_fn puede devolver genes reparados distintos a los que se
+        # mandaron a evaluar (ver core/evaluator.py) — se escriben de vuelta
+        # en el individuo (Lamarckiano) para que el genotipo quede consistente
+        # con el fitness que se le asigna, y el cruce/mutación de la próxima
+        # generación parta de la versión ya reparada.
+        if genes != list(ind):
+            ind[:] = genes
+        ind.fitness.values = (fitness,)
 
 
 def _guardar_checkpoint(path, generacion, pop, hof):
@@ -59,6 +79,16 @@ def _cargar_checkpoint(path):
         return pickle.load(f)
 
 
+def _tasa_mutacion(gen, generaciones, prob_inicial, prob_min):
+    """Interpolación lineal de prob_inicial (gen 1) a prob_min (última
+    generación) — muta más al principio para explorar, menos al final para
+    afinar en vez de seguir revolviendo una población ya casi convergida."""
+    if generaciones <= 1:
+        return prob_inicial
+    fraccion = (gen - 1) / (generaciones - 1)
+    return prob_inicial + (prob_min - prob_inicial) * fraccion
+
+
 def run_ga(
     evaluate_fn,
     n_genes,
@@ -74,11 +104,17 @@ def run_ga(
     checkpoint_path=None,
     checkpoint_cada=5,
     individuos_semilla=None,
+    mutacion_adaptativa=False,
+    prob_mutacion_min=None,
+    bandas_diametro=None,
+    reinicio_activo=False,
+    reinicio_paciencia=15,
+    reinicio_fraccion=0.15,
 ):
     if map_fn is None:
         map_fn = map
 
-    toolbox = _build_toolbox(n_genes, n_diametros, tam_torneo)
+    toolbox = _build_toolbox(n_genes, n_diametros, tam_torneo, bandas=bandas_diametro)
     hof = tools.HallOfFame(1)
 
     gen_inicial = 1
@@ -109,8 +145,17 @@ def run_ga(
         _evaluar_lote(evaluate_fn, map_fn, pop)
         hof.update(pop)
 
+    mejor_historico = hof[0].fitness.values[0]
+    gens_sin_mejora = 0
+
     for gen in range(gen_inicial, generaciones + 1):
         elite = toolbox.clone(hof[0])
+
+        prob_mutacion_gen = (
+            _tasa_mutacion(gen, generaciones, prob_mutacion, prob_mutacion_min)
+            if mutacion_adaptativa and prob_mutacion_min is not None
+            else prob_mutacion
+        )
 
         descendencia = toolbox.select(pop, len(pop) - 1)
         descendencia = [toolbox.clone(ind) for ind in descendencia]
@@ -122,7 +167,7 @@ def run_ga(
                 del hijo2.fitness.values
 
         for mutante in descendencia:
-            if random.random() < prob_mutacion:
+            if random.random() < prob_mutacion_gen:
                 toolbox.mutate(mutante)
                 del mutante.fitness.values
 
@@ -132,9 +177,42 @@ def run_ga(
         pop = descendencia + [elite]
         hof.update(pop)
 
+        mejor_actual = hof[0].fitness.values[0]
+        if mejor_actual < mejor_historico - 1e-9:
+            mejor_historico = mejor_actual
+            gens_sin_mejora = 0
+        else:
+            gens_sin_mejora += 1
+
+        # Reinicio por estancamiento: si el mejor fitness no mejora en varias
+        # generaciones seguidas, la población probablemente ya perdió
+        # diversidad (convergió a un óptimo local) y las generaciones que
+        # quedan se estarían gastando en poco más que ruido. Se reemplazan
+        # los peores individuos por otros frescos (aleatorios dentro de las
+        # mismas bandas de catálogo) para darle al GA una vía de escape, en
+        # vez de dejarlo estancado el resto de la corrida.
+        if (
+            reinicio_activo
+            and gens_sin_mejora >= reinicio_paciencia
+            and gen < generaciones
+        ):
+            n_frescos = max(1, round(len(pop) * reinicio_fraccion))
+            frescos = [toolbox.individual() for _ in range(n_frescos)]
+            _evaluar_lote(evaluate_fn, map_fn, frescos)
+            pop.sort(key=lambda ind: ind.fitness.values[0])
+            pop[-n_frescos:] = frescos
+            gens_sin_mejora = 0
+
         if on_generation is not None:
             fitnesses = [ind.fitness.values[0] for ind in pop]
-            on_generation(gen, min(fitnesses), sum(fitnesses) / len(fitnesses))
+            # `on_generation` puede devolver False para pedir que se corte acá
+            # (ver overnight_search.py: poda temprana de semillas que van muy
+            # por detrás de las anteriores). Cualquier otro valor de retorno
+            # (None incluido) significa "seguir" — no rompe a nadie que ya
+            # use este callback solo para loguear.
+            continuar = on_generation(gen, min(fitnesses), sum(fitnesses) / len(fitnesses))
+            if continuar is False:
+                break
 
         if checkpoint_path is not None and (
             gen % checkpoint_cada == 0 or gen == generaciones

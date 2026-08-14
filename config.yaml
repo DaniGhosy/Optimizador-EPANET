@@ -46,3 +46,21 @@ ga:
   procesos: 14
   checkpoint_path: checkpoint.pkl
   checkpoint_cada: 5
+  reparacion_activa: true   # si una tubería sale de rango, le ajusta un escalón de catálogo en la dirección que corrige y reevalúa, antes de dejarlo solo al cruce/mutación aleatorios
+  reparacion_max_intentos: 3   # corregir una tubería puede desviar caudal y sacar de rango a otra — hasta esta cantidad de rondas mientras siga mejorando
+  restringir_banda_diametros: true   # acota cada tubería a un rango de catálogo físicamente plausible (estimado por caudal), en vez de dejarle el catálogo completo — reduce el espacio de búsqueda real
+
+  reinicio_diversidad:   # si el mejor fitness no mejora en N generaciones seguidas, reemplaza los peores individuos por otros frescos para escapar de un óptimo local
+    activo: true
+    paciencia: 15     # generaciones sin mejora antes de reiniciar
+    fraccion: 0.15    # proporción de la población que se reemplaza cada vez
+
+  poda_temprana:   # solo aplica a búsqueda AFK (multi-semilla) — corta semillas que van muy por detrás de las anteriores, sin gastarles el resto de generaciones
+    activo: true
+    en_fraccion: 0.2       # generación de control = esta fracción de "generaciones" arriba
+    minimo_historial: 3    # no poda hasta tener al menos esta cantidad de semillas completas de referencia
+    tolerancia: 1.5        # poda si el fitness en ese punto es más de 1.5x el promedio histórico ahí
+
+  mutacion_adaptativa:   # tasa de mutación alta al principio (explorar), baja al final (afinar) en vez de fija toda la corrida
+    activo: true
+    prob_min: 0.05   # tasa en la última generación (arranca en prob_mutacion, interpola en línea recta)

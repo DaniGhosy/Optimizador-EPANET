@@ -9,9 +9,21 @@ import wntr
 # EpanetSimulator escribe temp.inp/.rpt/.bin/.hyd con un prefijo fijo por
 # defecto. Sin un prefijo único por proceso, evaluaciones concurrentes
 # (multiprocessing) se pisan los archivos entre sí y corrompen resultados
-# en silencio (sin excepción). Un prefijo por PID en el directorio temporal
-# del sistema evita la colisión y no ensucia el proyecto.
-_FILE_PREFIX = os.path.join(tempfile.gettempdir(), f"epanet_optimizer_{os.getpid()}")
+# en silencio (sin excepción). Un prefijo por PID evita la colisión.
+#
+# Por defecto vive en el temp del sistema y nunca se borra sola — cada
+# multiprocessing.Pool nuevo (una corrida = un Pool nuevo, ver main.py) trae
+# procesos con PIDs nuevos, así que cada corrida deja su propio set de
+# archivos huérfanos ahí para siempre. correr_optimizacion() en main.py
+# llama a configurar_directorio_temporal() con una carpeta propia de esa
+# corrida y la borra entera al terminar (shutil.rmtree) — así no se
+# acumulan gigas de basura en búsquedas AFK que encadenan miles de semillas.
+_file_prefix = os.path.join(tempfile.gettempdir(), f"epanet_optimizer_{os.getpid()}")
+
+
+def configurar_directorio_temporal(directorio):
+    global _file_prefix
+    _file_prefix = os.path.join(directorio, str(os.getpid()))
 
 
 def load_network(inp_path):
@@ -118,7 +130,7 @@ def apply_diameters(wn_base, pipe_names, diametros_mm):
 def run_simulation(wn):
     try:
         sim = wntr.sim.EpanetSimulator(wn)
-        resultados = sim.run_sim(file_prefix=_FILE_PREFIX)
+        resultados = sim.run_sim(file_prefix=_file_prefix)
     except Exception:
         return None
 

@@ -41,6 +41,7 @@ def _config_default():
 
 ESTADO = {
     "inp_path": None,
+    "inp_nombre": None,
     "config": _config_default(),
     "resultado": None,
     "log": "",
@@ -49,6 +50,7 @@ ESTADO = {
 _default_inp = os.path.join(DIR_PROYECTO, "networks", "Net1.inp")
 if os.path.exists(_default_inp):
     ESTADO["inp_path"] = _default_inp
+    ESTADO["inp_nombre"] = os.path.basename(_default_inp)
 
 
 # ------------------------------------------------------------- utilidades --
@@ -171,6 +173,21 @@ def index():
 
 # --------------------------------------------------------------- API: red --
 
+def _tuberias_conectadas_a_tanque(wn):
+    """IDs de tuberías con un extremo en un tanque — típicamente la línea de
+    conducción/aducción principal, candidata natural a excepción de velocidad
+    máxima (tolera más que el resto de la red). Reservorios (fuente de agua
+    externa, cabeza fija) no cuentan — la idea es específicamente el tanque de
+    almacenamiento/depósito."""
+    tanques = set(wn.tank_name_list)
+    if not tanques:
+        return []
+    return [
+        name for name in wn.pipe_name_list
+        if wn.get_link(name).start_node_name in tanques or wn.get_link(name).end_node_name in tanques
+    ]
+
+
 @app.route("/api/red/subir", methods=["POST"])
 def red_subir():
     archivo = request.files.get("archivo")
@@ -188,6 +205,7 @@ def red_subir():
         return jsonify({"ok": False, "error": str(e)}), 400
 
     ESTADO["inp_path"] = ruta
+    ESTADO["inp_nombre"] = archivo.filename
     return jsonify({
         "ok": True,
         "nombre": archivo.filename,
@@ -195,6 +213,7 @@ def red_subir():
         "nodos": wn.num_nodes,
         "unidades": wn.options.hydraulic.inpfile_units,
         "formula": wn.options.hydraulic.headloss,
+        "tuberias_tanque": _tuberias_conectadas_a_tanque(wn),
     })
 
 
@@ -208,12 +227,62 @@ def red_estado():
         return jsonify({"ok": False, "error": str(e)})
     return jsonify({
         "ok": True,
-        "nombre": os.path.basename(ESTADO["inp_path"]),
+        "nombre": ESTADO["inp_nombre"] or os.path.basename(ESTADO["inp_path"]),
         "tuberias": wn.num_pipes,
         "nodos": wn.num_nodes,
         "unidades": wn.options.hydraulic.inpfile_units,
         "formula": wn.options.hydraulic.headloss,
     })
+
+
+def _wn_y_simulacion_actual():
+    """Simula la red tal como está cargada, con sus diámetros actuales (sin
+    optimizar) — para el diagnóstico de "estado actual" en la pestaña Red, así
+    se puede ver de entrada cómo cumple la red antes de correr nada."""
+    if not ESTADO["inp_path"]:
+        return None, None, None
+    wn = load_network_para_optimizacion(ESTADO["inp_path"], ESTADO["config"])
+    resultados = run_simulation(wn)
+    restricciones = construir_restricciones(ESTADO["config"])
+    return wn, resultados, restricciones
+
+
+@app.route("/api/red/diagnostico")
+def red_diagnostico():
+    wn, resultados, restricciones = _wn_y_simulacion_actual()
+    if wn is None:
+        return jsonify({"ok": False, "error": "No hay red cargada"}), 400
+    if resultados is None:
+        return jsonify({"ok": False, "error": "La simulación no convergió con los diámetros actuales"})
+    penalizaciones = {type(r).__name__: float(r.evaluar(wn, resultados)) for r in restricciones}
+    return jsonify({"ok": True, "fitness": float(sum(penalizaciones.values())), "penalizaciones": penalizaciones})
+
+
+@app.route("/api/red/mapa")
+def red_mapa():
+    wn, resultados, restricciones = _wn_y_simulacion_actual()
+    if wn is None or resultados is None:
+        return jsonify({"ok": False})
+    return jsonify({"ok": True, **_datos_mapa(wn, resultados, restricciones)})
+
+
+@app.route("/api/red/tabla")
+def red_tabla():
+    wn, resultados, restricciones = _wn_y_simulacion_actual()
+    if wn is None or resultados is None:
+        return jsonify({"ok": False})
+    return jsonify({"ok": True, "filas": _filas_tabla(wn, resultados, restricciones)})
+
+
+@app.route("/api/red/descarga/xlsx")
+def red_descarga_xlsx():
+    wn, resultados, restricciones = _wn_y_simulacion_actual()
+    if wn is None or resultados is None:
+        abort(500)
+    fitness = float(sum(r.evaluar(wn, resultados) for r in restricciones))
+    ruta_out = os.path.join(tempfile.mkdtemp(prefix="epanet_opt_out_"), "reporte_estado_actual.xlsx")
+    escribir_reporte_excel(wn, resultados, restricciones, ruta_out, fitness, ESTADO["config"]["catalogo_diametros"])
+    return send_file(ruta_out, as_attachment=True, download_name="reporte_estado_actual.xlsx")
 
 
 # --------------------------------------------------------- API: parámetros --
@@ -223,11 +292,25 @@ def parametros_get():
     return jsonify(ESTADO["config"])
 
 
+def _fusionar_config(base, nuevo):
+    """Combina `nuevo` sobre `base`, recursivo en los dicts anidados. Así
+    guardar parámetros desde la UI no borra claves que el frontend todavía no
+    conoce (p.ej. ga.reparacion_activa, ga.poda_temprana) — sin esto, cada
+    "Guardar parámetros" reemplazaba la config entera y las perdía."""
+    resultado = dict(base)
+    for clave, valor in nuevo.items():
+        if isinstance(valor, dict) and isinstance(resultado.get(clave), dict):
+            resultado[clave] = _fusionar_config(resultado[clave], valor)
+        else:
+            resultado[clave] = valor
+    return resultado
+
+
 @app.route("/api/parametros", methods=["POST"])
 def parametros_post():
     nuevo = request.get_json()
     nuevo["red"] = {"inp_path": ESTADO["inp_path"]}
-    ESTADO["config"] = nuevo
+    ESTADO["config"] = _fusionar_config(ESTADO["config"], nuevo)
     return jsonify({"ok": True})
 
 

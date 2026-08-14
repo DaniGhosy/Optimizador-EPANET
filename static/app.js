@@ -28,6 +28,10 @@ document.querySelectorAll(".switch-row[data-toggles]").forEach(function (row) {
       if (row.dataset.toggles === "body-extra") hint.textContent = on ? "Activo" : "Desactivado";
       if (row.dataset.toggles === "body-tabla-normal") hint.textContent = on ? "Desplegada" : "Oculta";
       if (row.dataset.toggles === "body-tabla-nocturna") hint.textContent = on ? "Desplegada" : "Oculta";
+      if (row.dataset.toggles === "body-tabla-red") hint.textContent = on ? "Desplegada" : "Oculta";
+      if (row.dataset.toggles === "body-viol-normal") hint.textContent = on ? "Desplegada" : "Oculta";
+      if (row.dataset.toggles === "body-viol-nocturna") hint.textContent = on ? "Desplegada" : "Oculta";
+      if (row.dataset.toggles === "body-viol-red") hint.textContent = on ? "Desplegada" : "Oculta";
     }
   });
 });
@@ -84,13 +88,39 @@ function mostrarTooltip(e, titulo, filas) {
   ttRows.innerHTML = filas.join("");
 }
 
+// El resaltado visual al pasar el mouse se le aplica al elemento visible
+// (la línea/punto delgado que se ve), no al área de detección invisible
+// (mucho más ancha) que es la que realmente recibe el hover — por eso se
+// maneja a mano en vez de con :hover en CSS.
+let elementoResaltado = null;
+
+function quitarResaltado() {
+  if (elementoResaltado) {
+    elementoResaltado.classList.remove("hovered");
+    elementoResaltado = null;
+  }
+}
+
+function aplicarResaltado(hitEl, selectorVisual) {
+  const svg = hitEl.closest("svg");
+  if (!svg) return;
+  const visual = svg.querySelector(selectorVisual + '[data-id="' + CSS.escape(hitEl.dataset.id) + '"]');
+  if (visual) {
+    visual.classList.add("hovered");
+    elementoResaltado = visual;
+  }
+}
+
 document.addEventListener("mousemove", function (e) {
   const t = e.target;
   const pipe = t.closest ? t.closest(".pipe-line") : null;
   const node = t.closest ? t.closest(".node-dot") : null;
   const tank = t.closest ? t.closest(".tank-shape") : null;
 
+  quitarResaltado();
+
   if (pipe) {
+    aplicarResaltado(pipe, ".pipe-line-visual");
     const d = pipe.dataset;
     mostrarTooltip(e, "Tubería " + d.id, [
       fila("Diámetro", d.diam + " mm"),
@@ -99,6 +129,7 @@ document.addEventListener("mousemove", function (e) {
       fila("Pérd. unitaria", d.hl + " m/km"),
     ]);
   } else if (node) {
+    aplicarResaltado(node, ".node-dot-visual");
     const n = node.dataset;
     mostrarTooltip(e, "Nodo " + n.id, [
       fila("Cota", n.cota + " m"),
@@ -106,6 +137,7 @@ document.addEventListener("mousemove", function (e) {
       fila("Presión", n.presion + " m"),
     ]);
   } else if (tank) {
+    aplicarResaltado(tank, ".tank-shape-visual");
     const k = tank.dataset;
     mostrarTooltip(e, "Tanque " + k.id, [
       fila("Cota de solera", k.solera + " m"),
@@ -117,7 +149,7 @@ document.addEventListener("mousemove", function (e) {
     tooltip.hidden = true;
   }
 });
-document.addEventListener("mouseleave", function () { tooltip.hidden = true; });
+document.addEventListener("mouseleave", function () { tooltip.hidden = true; quitarResaltado(); });
 
 // ===================================================== Mapa dinámico (SVG) =
 function colorParaEstado(estado, excepcion) {
@@ -131,10 +163,15 @@ function construirMapaSVG(svgEl, leyendaEl, datos) {
   while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
   leyendaEl.innerHTML = "";
 
+  // EPANET usa Y creciente hacia arriba (convención cartesiana); SVG usa Y
+  // creciente hacia abajo. Sin invertir, el mapa sale reflejado verticalmente
+  // respecto a como se ve en EPANET (arriba/abajo cambiados).
+  const fy = function (y) { return -y; };
+
   const xs = [], ys = [];
-  datos.pipes.forEach(function (p) { xs.push(p.x0, p.x1); ys.push(p.y0, p.y1); });
-  datos.nodes.forEach(function (n) { xs.push(n.x); ys.push(n.y); });
-  datos.tank.forEach(function (t) { xs.push(t.x); ys.push(t.y); });
+  datos.pipes.forEach(function (p) { xs.push(p.x0, p.x1); ys.push(fy(p.y0), fy(p.y1)); });
+  datos.nodes.forEach(function (n) { xs.push(n.x); ys.push(fy(n.y)); });
+  datos.tank.forEach(function (t) { xs.push(t.x); ys.push(fy(t.y)); });
   if (!xs.length) return;
 
   const minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
@@ -145,43 +182,80 @@ function construirMapaSVG(svgEl, leyendaEl, datos) {
   const escala = Math.max(w, h) / 640;
 
   datos.pipes.forEach(function (p) {
-    const linea = document.createElementNS(SVG_NS, "line");
-    linea.setAttribute("class", "pipe-line");
-    linea.setAttribute("x1", p.x0); linea.setAttribute("y1", p.y0);
-    linea.setAttribute("x2", p.x1); linea.setAttribute("y2", p.y1);
-    linea.setAttribute("stroke", colorParaEstado(p.estado, p.excepcion));
-    linea.setAttribute("stroke-width", (p.excepcion ? 3.2 : 1.6) * escala);
-    linea.setAttribute("fill", "none");
-    linea.dataset.id = p.id;
-    linea.dataset.diam = p.diametro;
-    linea.dataset.len = p.longitud;
-    linea.dataset.vel = p.velocidad;
-    linea.dataset.hl = p.perdida;
-    svgEl.appendChild(linea);
+    const color = colorParaEstado(p.estado, p.excepcion);
+    const grosorVisual = (p.excepcion ? 3.2 : 1.6) * escala;
+
+    // Línea visible — decorativa, no recibe eventos de mouse.
+    const visible = document.createElementNS(SVG_NS, "line");
+    visible.setAttribute("class", "pipe-line-visual");
+    visible.setAttribute("x1", p.x0); visible.setAttribute("y1", fy(p.y0));
+    visible.setAttribute("x2", p.x1); visible.setAttribute("y2", fy(p.y1));
+    visible.setAttribute("stroke", color);
+    visible.setAttribute("stroke-width", grosorVisual);
+    visible.setAttribute("stroke-linecap", "round");
+    visible.setAttribute("fill", "none");
+    visible.setAttribute("pointer-events", "none");
+    visible.dataset.id = p.id;
+    svgEl.appendChild(visible);
+
+    // Área de detección — invisible y bastante más ancha, para que el
+    // hover no dependa de acertarle a una línea de 1-2px de grosor.
+    const hit = document.createElementNS(SVG_NS, "line");
+    hit.setAttribute("class", "pipe-line");
+    hit.setAttribute("x1", p.x0); hit.setAttribute("y1", fy(p.y0));
+    hit.setAttribute("x2", p.x1); hit.setAttribute("y2", fy(p.y1));
+    hit.setAttribute("stroke", "transparent");
+    hit.setAttribute("stroke-width", Math.max(grosorVisual * 6, 10 * escala));
+    hit.setAttribute("fill", "none");
+    hit.dataset.id = p.id;
+    hit.dataset.diam = p.diametro;
+    hit.dataset.len = p.longitud;
+    hit.dataset.vel = p.velocidad;
+    hit.dataset.hl = p.perdida;
+    svgEl.appendChild(hit);
   });
 
   datos.nodes.forEach(function (n) {
-    const c = document.createElementNS(SVG_NS, "circle");
-    c.setAttribute("class", "node-dot");
-    c.setAttribute("cx", n.x); c.setAttribute("cy", n.y);
-    c.setAttribute("r", 2.6 * escala);
-    c.setAttribute("fill", "var(--surface)");
-    c.setAttribute("stroke", "var(--ink-faint)");
-    c.setAttribute("stroke-width", 0.9 * escala);
-    c.dataset.id = n.id; c.dataset.cota = n.cota; c.dataset.demanda = n.demanda; c.dataset.presion = n.presion;
-    svgEl.appendChild(c);
+    const visible = document.createElementNS(SVG_NS, "circle");
+    visible.setAttribute("class", "node-dot-visual");
+    visible.setAttribute("cx", n.x); visible.setAttribute("cy", fy(n.y));
+    visible.setAttribute("r", 2.6 * escala);
+    visible.setAttribute("fill", "var(--surface)");
+    visible.setAttribute("stroke", "var(--ink-faint)");
+    visible.setAttribute("stroke-width", 0.9 * escala);
+    visible.setAttribute("pointer-events", "none");
+    visible.dataset.id = n.id;
+    svgEl.appendChild(visible);
+
+    const hit = document.createElementNS(SVG_NS, "circle");
+    hit.setAttribute("class", "node-dot");
+    hit.setAttribute("cx", n.x); hit.setAttribute("cy", fy(n.y));
+    hit.setAttribute("r", Math.max(2.6 * escala * 3, 9 * escala));
+    hit.setAttribute("fill", "transparent");
+    hit.dataset.id = n.id; hit.dataset.cota = n.cota; hit.dataset.demanda = n.demanda; hit.dataset.presion = n.presion;
+    svgEl.appendChild(hit);
   });
 
   datos.tank.forEach(function (t) {
-    const r = document.createElementNS(SVG_NS, "rect");
-    r.setAttribute("class", "tank-shape");
     const lado = 12 * escala;
-    r.setAttribute("x", t.x - lado); r.setAttribute("y", t.y - lado * 0.8);
-    r.setAttribute("width", lado * 2); r.setAttribute("height", lado * 1.6);
-    r.setAttribute("rx", 2);
-    r.setAttribute("fill", "none"); r.setAttribute("stroke", "var(--brass)"); r.setAttribute("stroke-width", 1.4 * escala);
-    r.dataset.id = t.id; r.dataset.solera = t.solera; r.dataset.inicial = t.inicial; r.dataset.min = t.min; r.dataset.max = t.max;
-    svgEl.appendChild(r);
+    const visible = document.createElementNS(SVG_NS, "rect");
+    visible.setAttribute("class", "tank-shape-visual");
+    visible.setAttribute("x", t.x - lado); visible.setAttribute("y", fy(t.y) - lado * 0.8);
+    visible.setAttribute("width", lado * 2); visible.setAttribute("height", lado * 1.6);
+    visible.setAttribute("rx", 2);
+    visible.setAttribute("fill", "none"); visible.setAttribute("stroke", "var(--brass)"); visible.setAttribute("stroke-width", 1.4 * escala);
+    visible.setAttribute("pointer-events", "none");
+    visible.dataset.id = t.id;
+    svgEl.appendChild(visible);
+
+    const hit = document.createElementNS(SVG_NS, "rect");
+    hit.setAttribute("class", "tank-shape");
+    const padHit = lado * 0.5;
+    hit.setAttribute("x", t.x - lado - padHit); hit.setAttribute("y", fy(t.y) - lado * 0.8 - padHit);
+    hit.setAttribute("width", lado * 2 + padHit * 2); hit.setAttribute("height", lado * 1.6 + padHit * 2);
+    hit.setAttribute("fill", "transparent");
+    hit.dataset.id = t.id; hit.dataset.solera = t.solera; hit.dataset.inicial = t.inicial; hit.dataset.min = t.min; hit.dataset.max = t.max;
+    svgEl.appendChild(hit);
   });
 
   const items = [];
@@ -272,9 +346,24 @@ async function subirRed(archivo) {
     msg.textContent = "Red cargada: " + datos.nombre;
     actualizarInfoRed(datos);
     tuberiasDisponibles = await fetch("/api/parametros/tuberias").then(function (r) { return r.json(); });
+    sugerirExcepcionTanque(datos.tuberias_tanque || []);
   } else {
     msg.textContent = "Error: " + datos.error;
   }
+}
+
+// Si la red trae un tanque, la(s) tubería(s) conectada(s) a él suelen ser la
+// línea de conducción/aducción principal — candidata natural a tolerar más
+// velocidad que el resto. Se sugiere de entrada como excepción (5 m/s, el
+// mismo valor de referencia que ya se usaba a mano), sin pisar excepciones
+// que el usuario ya haya configurado — y siempre queda la opción de
+// cambiarla o quitarla con los controles normales de la lista.
+function sugerirExcepcionTanque(tuberiasTanque) {
+  const excList = document.getElementById("exc-list");
+  if (!tuberiasTanque.length || excList.children.length) return;
+  tuberiasTanque.forEach(function (id) {
+    excList.appendChild(crearFilaExcepcion(id, "5.00"));
+  });
 }
 
 function actualizarInfoRed(datos) {
@@ -285,6 +374,52 @@ function actualizarInfoRed(datos) {
   document.getElementById("rail-red-estado").innerHTML =
     'Red cargada<br><span class="mono" style="color:var(--ink-dim)">' + datos.nombre + "</span> · " + datos.tuberias + " tuberías";
   document.getElementById("resultados-sub").textContent = datos.tuberias + " tuberías · red cargada";
+  mostrarEstadoActualRed();
+}
+
+// Diagnóstico de la red tal como está cargada (diámetros del .inp, sin
+// optimizar) — para que al subir un archivo se vea de entrada cómo cumple,
+// con el mismo mapa/tabla que se usa para mostrar resultados optimizados.
+async function mostrarEstadoActualRed() {
+  const wrap = document.getElementById("red-diagnostico-wrap");
+  const [diag, mapa, tabla] = await Promise.all([
+    fetch("/api/red/diagnostico").then(function (r) { return r.json(); }),
+    fetch("/api/red/mapa").then(function (r) { return r.json(); }),
+    fetch("/api/red/tabla").then(function (r) { return r.json(); }),
+  ]);
+
+  if (!diag.ok) {
+    wrap.classList.add("oculto");
+    return;
+  }
+
+  if (!mapa.ok || !tabla.ok) {
+    // La red cargó pero la simulación con los diámetros actuales no convergió
+    wrap.classList.remove("oculto");
+    document.getElementById("rd-convergencia").textContent = "No convergió";
+    document.getElementById("rd-conformes").textContent = "—";
+    document.getElementById("rd-velocidad").textContent = "—";
+    document.getElementById("rd-perdida").textContent = "—";
+    construirMapaSVG(document.getElementById("svg-red"), document.getElementById("leyenda-red"), { pipes: [], nodes: [], tank: [], conteos: { ok: 0, vel: 0, hl: 0 } });
+    construirTabla(document.getElementById("tabla-red-body"), []);
+    document.getElementById("viol-red").innerHTML = '<div class="texto-tenue">' + (diag.error || "No se pudo simular.") + "</div>";
+    return;
+  }
+
+  const pen = diag.penalizaciones || {};
+  document.getElementById("rd-velocidad").textContent = (pen.VelocidadConstraint || 0).toFixed(4);
+  document.getElementById("rd-perdida").textContent = (pen.PerdidaUnitariaConstraint || 0).toFixed(4);
+  document.getElementById("rd-convergencia").textContent = "Converge";
+
+  const total = mapa.conteos.ok + mapa.conteos.vel + mapa.conteos.hl;
+  document.getElementById("rd-conformes").textContent = mapa.conteos.ok + " / " + total;
+
+  construirMapaSVG(document.getElementById("svg-red"), document.getElementById("leyenda-red"), mapa);
+  construirViolaciones(document.getElementById("viol-red"), mapa.pipes);
+  construirTabla(document.getElementById("tabla-red-body"), tabla.filas);
+  document.getElementById("dl-xlsx-red").href = "/api/red/descarga/xlsx";
+
+  wrap.classList.remove("oculto");
 }
 
 async function cargarEstadoRedInicial() {

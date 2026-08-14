@@ -52,6 +52,30 @@ def parse_args():
     return parser.parse_args()
 
 
+def _gen_checkpoint_poda(generaciones, en_fraccion):
+    return max(1, round(generaciones * en_fraccion))
+
+
+def _fabrica_poda(poda_cfg, gen_checkpoint, historial_checkpoint):
+    """Callback debe_continuar(gen, fitness_min) para correr_optimizacion: en
+    la generación de control, si ya hay suficiente historial de semillas
+    anteriores y esta va claramente peor que el promedio de ellas en ese mismo
+    punto, pide cortar en vez de gastarle el resto de generaciones a una
+    semilla que casi seguro no va a superar al mejor resultado ya guardado."""
+    minimo_historial = poda_cfg.get("minimo_historial", 3)
+    tolerancia = poda_cfg.get("tolerancia", 1.5)
+
+    def debe_continuar(gen, fitness_min):
+        if gen != gen_checkpoint or len(historial_checkpoint) < minimo_historial:
+            return True
+        promedio = sum(historial_checkpoint) / len(historial_checkpoint)
+        if promedio <= 0:
+            return True
+        return fitness_min <= promedio * tolerancia
+
+    return debe_continuar
+
+
 def _escribir_estado(salida_dir, corriendo, intentos, inicio, mejor):
     estado = {
         "corriendo": corriendo,
@@ -96,6 +120,14 @@ def main():
     limite_seg = args.horas * 3600
     intentos = 0
 
+    poda_cfg = config_base["ga"].get("poda_temprana", {})
+    poda_activa = poda_cfg.get("activo", False)
+    gen_checkpoint = None
+    historial_checkpoint = []
+    if poda_activa:
+        gen_checkpoint = _gen_checkpoint_poda(config_base["ga"]["generaciones"], poda_cfg.get("en_fraccion", 0.2))
+        print(f"Poda temprana activa: se compara en la generación {gen_checkpoint} contra el promedio de semillas anteriores (tolerancia x{poda_cfg.get('tolerancia', 1.5)})")
+
     print(f"Búsqueda multi-semilla — límite: {args.horas} h" + (f", máx {args.n_semillas} semillas" if args.n_semillas else ""))
     print(f"Resultados en: {os.path.abspath(args.salida_dir)}\n")
     _escribir_estado(args.salida_dir, True, intentos, inicio, mejor)
@@ -118,19 +150,30 @@ def main():
         config["ga"]["semilla"] = semilla
         config["ga"]["checkpoint_path"] = None  # cada semilla es una corrida propia, sin resume
 
+        debe_continuar = _fabrica_poda(poda_cfg, gen_checkpoint, historial_checkpoint) if poda_activa else None
+
         print(f"=== Semilla {semilla}  (intento {intentos + 1}, {transcurrido / 60:.1f} min transcurridos) ===")
         try:
-            resultado = correr_optimizacion(config, imprimir=False)
+            resultado = correr_optimizacion(config, imprimir=False, debe_continuar=debe_continuar)
         except Exception as e:
             print(f"  Falló esta semilla ({e}), sigue con la próxima.")
             intentos += 1
             continue
 
         fitness = resultado["fitness_final"]
-        print(f"  fitness final: {fitness:.4f}")
+        podada = poda_activa and resultado["historia"] and resultado["historia"][-1]["gen"] < config["ga"]["generaciones"]
+        print(f"  fitness final: {fitness:.4f}" + ("  (podada temprano)" if podada else ""))
+
+        if poda_activa:
+            fila_checkpoint = next((h for h in resultado["historia"] if h["gen"] == gen_checkpoint), None)
+            if fila_checkpoint is not None:
+                historial_checkpoint.append(fila_checkpoint["fitness_min"])
 
         with open(ruta_bitacora, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"semilla": semilla, "fitness_final": fitness, "penalizaciones": resultado["penalizaciones"]}) + "\n")
+            f.write(json.dumps({
+                "semilla": semilla, "fitness_final": fitness,
+                "penalizaciones": resultado["penalizaciones"], "podada": podada,
+            }) + "\n")
 
         if mejor is None or fitness < mejor["fitness_final"]:
             resultado["semilla"] = semilla
